@@ -42,7 +42,6 @@ import zipfile
 import sys
 import io
 import base64
-import string
 import tempfile
 import os.path
 import shutil
@@ -82,13 +81,14 @@ def encode(input, output):
         text_extensions = ['txt', 'html', 'xml']
         extension = os.path.splitext(name)[1][1:].strip().lower()
         try:
-            # Check if text data
-            data.decode(ENCODING)
-            try:
-                strdata = map(chr, data)
-            except TypeError:
-                strdata = data
-            if extension not in text_extensions and not all(c in string.printable for c in strdata):
+            decoded = data.decode(ENCODING)
+
+            has_forbidden_ctrl = any(
+                ord(ch) < 32 and ch not in '\t\n\r'
+                for ch in decoded
+            )
+
+            if extension not in text_extensions and has_forbidden_ctrl:
                 raise UnicodeDecodeError(ENCODING, "".encode(ENCODING), 0, 1, "Artificial exception")
 
             # Encode
