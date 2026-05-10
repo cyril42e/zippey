@@ -78,7 +78,7 @@ def encode(input, output):
     zfp = zipfile.ZipFile(tfp, "r")
     for name in zfp.namelist():
         data = zfp.read(name)
-        text_extensions = ['txt', 'html', 'xml']
+        text_extensions = ['txt', 'html', 'xml', "json", "yaml", "csv"]
         extension = os.path.splitext(name)[1][1:].strip().lower()
         try:
             decoded = data.decode(ENCODING)
