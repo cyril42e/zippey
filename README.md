@@ -44,36 +44,34 @@ in the text file, which might sum up to only 1KB.
 
 ## File Format
 
-The text format is defined as a series of records, where each record represents
-a file in the original zip-based file. A record is composed of two parts, a
-header that contains the meta information and a body that contains the content.
-The header is a few data fields, separated by the pipe character, like this:
+Zippey uses a standard MIME multipart format (RFC 2046) to store the unzipped content.
+The file starts with global MIME headers, followed by individual parts for each file in
+the archive.
 
-    length|raw-length|type|filename
+Each part contains:
 
-where:
+1.  **Headers**:
+    *   `Content-Type`: The detected MIME type of the file.
+    *   `Content-Disposition`: Includes the original filename
+         (including the path, if the zipped file contains directories)
+    *   `Content-MD5`: MD5 sum of the raw content.
+    *   `Content-Length-Raw`: Size of the original file in bytes.
+    *   `Content-Length-Encoded`: Size of the stored content (Base64-encoded or raw).
+    *   `Content-Transfer-Encoding`: `8bit` for text files, `base64` for binary files.
+2.  **Body**:
+    *   Text files are stored as-is (`8bit`).
+    *   Binary files are stored using MIME-compliant Base64 encoding.
 
-* `length` is an ASCII-coded integer,
-  denoting the length in bytes of the following data section
-* `raw-length` is the original length of the data
-  (before transformation took place)
-* `type` is A for text data and B for binary data
-* `filename` is the original file name
-  (including the path, if the zipped file contains directories)
+Example of a part header:
 
-Immediately after the header, there is a line feed (LF => `'\n'`),
-followed by `length` bytes of data,
-another LF and then the next record,
-and so on:
+    --======ZIPPEY_FILE_BOUNDARY======
+    Content-Type: application/octet-stream
+    Content-Disposition: attachment; filename="image.png"
+    Content-MD5: d41d8cd98f00b204e9800998ecf8427e
+    Content-Length-Raw: 1234
+    Content-Length-Encoded: 1672
+    Content-Transfer-Encoding: base64
 
-    [header1]\n[data1]\n[header2]\n[data2] ...
-
-There are two types of data sections:
-
-1. If the file contains only text data,
-   its content is copied to the data section without any change
-2. Otherwise, data is base64-coded,
-   to ensure the entire file is in text format.
 
 ## How to use
 

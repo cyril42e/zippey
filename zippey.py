@@ -46,10 +46,14 @@ import tempfile
 import os.path
 import shutil
 import subprocess
+import hashlib
+import mimetypes
+import re
 
 DEBUG_ZIPPEY = False
 NAME = 'Zippey'
 ENCODING = 'UTF-8'
+MIME_BOUNDARY = "======ZIPPEY_FILE_BOUNDARY======"
 
 
 def debug(msg):
@@ -76,10 +80,19 @@ def encode(input, output):
     tfp = tempfile.TemporaryFile(mode='w+b')
     tfp.write(input.read())
     zfp = zipfile.ZipFile(tfp, "r")
+    
+    # Write global MIME headers
+    output.write("MIME-Version: 1.0\n".encode(ENCODING))
+    output.write(f"Content-Type: multipart/mixed; boundary=\"{MIME_BOUNDARY}\"\n\n".encode(ENCODING))
+
     for name in zfp.namelist():
         data = zfp.read(name)
         text_extensions = ['txt', 'html', 'xml', "json", "yaml", "csv"]
         extension = os.path.splitext(name)[1][1:].strip().lower()
+        md5sum = hashlib.md5(data).hexdigest()
+        mime_type, _ = mimetypes.guess_type(name)
+
+        is_binary = False
         try:
             decoded = data.decode(ENCODING)
 
@@ -90,20 +103,37 @@ def encode(input, output):
 
             if extension not in text_extensions and has_forbidden_ctrl:
                 raise UnicodeDecodeError(ENCODING, "".encode(ENCODING), 0, 1, "Artificial exception")
-
-            # Encode
-            debug("Appending text file '{}'".format(name))
-            output.write("{}|{}|A|{}\n".format(len(data), len(data), name).encode(ENCODING))
-            output.write(data)
-            output.write("\n".encode(ENCODING)) # Separation from next meta line
         except UnicodeDecodeError:
-            # Binary data
+            is_binary = True
+
+        raw_len = len(data)
+        if is_binary:
+            if not mime_type:
+                mime_type = "application/octet-stream"
             debug("Appending binary file '{}'".format(name))
-            raw_len = len(data)
             data = base64.b64encode(data)
-            output.write("{}|{}|B|{}\n".format(len(data), raw_len, name).encode(ENCODING))
-            output.write(data)
-            output.write("\n".encode(ENCODING))  # Separation from next meta line
+            transfer_encoding = "base64"
+        else:
+            if not mime_type:
+                mime_type = "text/plain"
+            mime_type += f"; charset={ENCODING}"
+            debug("Appending text file '{}'".format(name))
+            transfer_encoding = "8bit"
+
+        header = (
+            f"--{MIME_BOUNDARY}\n"
+            f"Content-Type: {mime_type}\n"
+            f"Content-Disposition: attachment; filename=\"{name}\"\n"
+            f"Content-MD5: {md5sum}\n"
+            f"Content-Length-Raw: {raw_len}\n"
+            f"Content-Length-Encoded: {len(data)}\n"
+            f"Content-Transfer-Encoding: {transfer_encoding}\n\n"
+        )
+        output.write(header.encode(ENCODING))
+        output.write(data)
+        output.write("\n".encode(ENCODING)) # Separation from next meta line
+            
+    output.write(f"--{MIME_BOUNDARY}--\n".encode(ENCODING))
     zfp.close()
     tfp.close()
 
@@ -120,10 +150,26 @@ def decode(input, output):
     tfp = tempfile.TemporaryFile(mode='w+b')
     zfp = zipfile.ZipFile(tfp, "w", zipfile.ZIP_DEFLATED)
 
-    while True:
-        meta = input.readline().decode(ENCODING)
-        if not meta:
-            break
+    is_mime_format = False
+    meta = input.readline().decode(ENCODING)
+    if meta and (meta.startswith("MIME-Version:") or meta.startswith(f"--{MIME_BOUNDARY}")):
+        is_mime_format = True
+
+    if is_mime_format:
+        _decode_mime(input, zfp, meta)
+    else:
+        _decode_legacy(input, zfp, meta)
+
+    # Flush all writes
+    zfp.close()
+
+    # Write output
+    tfp.seek(0)
+    output.write(tfp.read())
+    tfp.close()
+
+def _decode_legacy(input, zfp, meta):
+    while meta:
 
         (data_len, raw_len, mode, name) = [t(s) for (t, s) in zip((int, int, str, str), meta.split('|'))]
         if mode == 'A':
@@ -136,19 +182,48 @@ def decode(input, output):
             input.read(1) # Skip last '\n'
         else:
             # Should never reach here
-            zfp.close()
-            tfp.close()
             error('Illegal mode "{}"'.format(mode))
             sys.exit(1)
 
-    # Flush all writes
-    zfp.close()
+        meta = input.readline().decode(ENCODING)
 
-    # Write output
-    tfp.seek(0)
-    output.write(tfp.read())
-    tfp.close()
+def _decode_mime(input, zfp, meta):
+    while meta:
 
+        if meta.startswith(f"--{MIME_BOUNDARY}--"):
+            break
+        if meta.startswith(f"--{MIME_BOUNDARY}"):
+            # Read headers
+            headers = {}
+            while True:
+                line = input.readline().decode(ENCODING).strip()
+                if not line:
+                    break
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    headers[k.strip().lower()] = v.strip()
+            
+            encoded_len = int(headers.get("content-length-encoded", 0))
+            transfer_encoding = headers.get("content-transfer-encoding", "8bit")
+            disp = headers.get("content-disposition", "")
+            
+            # Extract filename from Content-Disposition
+            name = ""
+            m = re.search(r'filename="([^"]+)"', disp)
+            if m:
+                name = m.group(1)
+            else:
+                name = "unknown"
+                
+            debug("Appending file '{}' (MIME format)".format(name))
+            data = input.read(encoded_len)
+            if transfer_encoding == "base64":
+                data = base64.b64decode(data)
+                
+            zfp.writestr(name, data)
+            input.read(1) # Skip last '\n'
+
+        meta = input.readline().decode(ENCODING)
 
 def install(args):
     '''Install Git filters'''
