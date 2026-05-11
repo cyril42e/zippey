@@ -89,7 +89,7 @@ Then you need to install this filter with Git.
 
 For this, clone the repository and change into it:
 
-    git clone git@bitbucket.org:sippey/zippey.git
+    git clone https://github.com/rockstorm101/zippey.git
     cd zippey
 
 Then, we add the filters,
