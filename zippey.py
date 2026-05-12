@@ -49,6 +49,7 @@ import subprocess
 import hashlib
 import mimetypes
 import re
+import math
 
 DEBUG_ZIPPEY = False
 NAME = 'Zippey'
@@ -75,8 +76,16 @@ def init():
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
 
 def encode(input, output):
-    '''Encode into special VCS friendly format from input (application/zip) to output (text/plain)'''
     debug("ENCODE was called")
+    _encode_generic(input, output, True)
+
+def textconv(args, output):
+    debug("TEXTCONV was called")
+    with open(args.file_, 'rb') as f:
+        _encode_generic(f, output, False)
+
+def _encode_generic(input, output, with_base64):
+    '''Encode into special VCS friendly format from input (application/zip) to output (text/plain)'''
     tfp = tempfile.TemporaryFile(mode='w+b')
     tfp.write(input.read())
     zfp = zipfile.ZipFile(tfp, "r")
@@ -107,12 +116,21 @@ def encode(input, output):
             is_binary = True
 
         raw_len = len(data)
+        stored_encoded_len = None
+        stored_transfer_encoding = None
         if is_binary:
             if not mime_type:
                 mime_type = "application/octet-stream"
             debug("Appending binary file '{}'".format(name))
-            data = base64.b64encode(data)
-            transfer_encoding = "base64"
+            if with_base64:
+                data = base64.encodebytes(data)
+                transfer_encoding = "base64"
+            else:
+                data = f"[Binary file, size: {raw_len} bytes, MD5: {md5sum}]\n".encode(ENCODING)
+                transfer_encoding = "8bit"
+                stored_transfer_encoding = "base64"
+                nb_lines = math.ceil(raw_len / 57)  # 57 octets raw <=> 76 encoded chars
+                stored_encoded_len = math.ceil(raw_len / 3) * 4 + nb_lines * len(os.linesep)
         else:
             if not mime_type:
                 mime_type = "text/plain"
@@ -127,8 +145,12 @@ def encode(input, output):
             f"Content-MD5: {md5sum}\n"
             f"Content-Length-Raw: {raw_len}\n"
             f"Content-Length-Encoded: {len(data)}\n"
-            f"Content-Transfer-Encoding: {transfer_encoding}\n\n"
+            f"Content-Transfer-Encoding: {transfer_encoding}\n"
         )
+        header += f"X-Stored-Content-Encoded-Length: {stored_encoded_len}\n" if stored_encoded_len else ""
+        header += f"X-Stored-Content-Transfer-Encoding: {stored_transfer_encoding}\n" if stored_transfer_encoding else ""
+        header += "\n"
+
         output.write(header.encode(ENCODING))
         output.write(data)
         output.write("\n".encode(ENCODING)) # Separation from next meta line
@@ -256,7 +278,7 @@ def install(args):
     if args.diff:
         debug("Installing diff filters")
         subprocess.run(
-            config_cmd + ["diff.zippey.textconv", "zippey.py list"],
+            config_cmd + ["diff.zippey.textconv", "zippey.py textconv"],
             check=True)
 
     _install_attributes(args)
@@ -289,7 +311,7 @@ def _install_attributes(args):
             tmp_file.write(f"*.{ext:8}  filter=zippey  {diff_filter}\n")
 
 
-def size_list(args):
+def size_list(args, out):
     '''Summarise files and sizes within a ZIP file'''
     debug("List was called")
 
@@ -312,9 +334,8 @@ def size_list(args):
             lines.append(f"{sname:>{name_len}}  "
                          f"{item.file_size:{size_len}}")
 
-    with open(args.output, 'w') as output:
-        for line in lines:
-            output.write(f"{line}\n")
+    for line in lines:
+        out.write(f"{line}\n".encode(ENCODING))
 
 
 def parse_args():
@@ -362,6 +383,13 @@ def parse_args():
                           help="ZIP file to print information from")
     l_parser.set_defaults(func=size_list)
 
+    # textconv command parser
+    t_help = "encode ZIP content without base64 data for better diff-ing"
+    t_parser = command_parsers.add_parser('textconv', help=t_help)
+    t_parser.add_argument('file_', metavar='FILE',
+                          help="encoded file to process")
+    t_parser.set_defaults(func=textconv)
+
     return parser.parse_args()
 
 
@@ -377,15 +405,16 @@ def main():
     init()
 
     # command switch
-    if args.func in ['e', 'd']:
+    if args.func in ['e', 'd', textconv, size_list]:
         with io.open(sys.stdin.fileno(), 'rb') as in_stream,\
              io.open(sys.stdout.fileno(), 'wb') as out_stream:
             if args.func == 'e':
                 encode(in_stream, out_stream)
             elif args.func == 'd':
                 decode(in_stream, out_stream)
+            else:
+                args.func(args, out_stream)
     else:
-        args.output = sys.stdout.fileno()
         args.func(args)
 
 

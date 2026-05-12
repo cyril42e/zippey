@@ -72,6 +72,13 @@ Example of a part header:
     Content-Length-Encoded: 1672
     Content-Transfer-Encoding: base64
 
+## Better Diffs with Textconv
+
+Binary files in the archive can create very large Base64 blobs in the text representation,
+making `git diff` output hard to read. Zippey provides a `textconv` tool to solve this.
+When enabled, Git will replace Base64 blobs with a summary line in the diff:
+
+    [Binary file, size: 1234 bytes, MD5: d41d8cd98f00b204e9800998ecf8427e]
 
 ## How to use
 
@@ -98,6 +105,8 @@ on Unix/Linux/BSD/OSX:
     git config --global --replace-all filter.zippey.smudge "$PWD/zippey.py d"
     # clean filter
     git config --global --replace-all filter.zippey.clean  "$PWD/zippey.py e"
+    # diff filter (textconv)
+    git config --global --replace-all diff.zippey.textconv "$PWD/zippey.py textconv"
 
 on Windows:
 
@@ -105,6 +114,8 @@ on Windows:
     git config --global --replace-all filter.zippey.smudge "python %cd%/zippey.py d"
     # clean filter
     git config --global --replace-all filter.zippey.clean  "python %cd%/zippey.py e"
+    # diff filter (textconv)
+    git config --global --replace-all diff.zippey.textconv "python %cd%/zippey.py textconv"
 
 ### Use
 
