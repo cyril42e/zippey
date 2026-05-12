@@ -309,8 +309,8 @@ def size_list(args):
                 sname = ('...' + name[len(name)-name_len+3:])
             else:
                 sname = name
-                lines.append(f"{sname:>{name_len}}  "
-                             f"{item.file_size:{size_len}}")
+            lines.append(f"{sname:>{name_len}}  "
+                         f"{item.file_size:{size_len}}")
 
     with open(args.output, 'w') as output:
         for line in lines:
